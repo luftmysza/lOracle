@@ -13,16 +13,16 @@ import (
 
 const DBPath string = "data/logoracle.db"
 
-// const (
-// 	EMERG byte = iota
-// 	ALERT
-// 	CRIT
-// 	ERR
-// 	WARNING
-// 	NOTICE
-// 	INFO
-// 	DEBUG
-// )
+const (
+	EMERG byte = iota
+	ALERT
+	CRIT
+	ERR
+	WARNING
+	NOTICE
+	INFO
+	DEBUG
+)
 
 type JournaldLog map[string]json.RawMessage
 
@@ -30,21 +30,15 @@ type Event struct {
 	Timestamp time.Time
 	Host      string
 	// Module      OSModule
-	// Application Application
-	Module      string
-	Application string
-	// Severity    byte
-	Severity string
-	Message  string
-	BootID   string
+	Application Application
+	Severity    byte
+	Message     string
+	BootID      string
 }
 
-// type OSModule struct {
-// 	name string
-// }
-// type Application struct {
-// 	name string
-// }
+type Application struct {
+	name string
+}
 
 type Store struct {
 	db *sql.DB
@@ -64,11 +58,9 @@ type SQLQuery struct {
 }
 
 func main() {
-
 	if err := runJournaldPipeline(); err != nil {
 		log.Fatal(err)
 	}
-
 }
 
 func runJournaldPipeline() error {
@@ -173,14 +165,45 @@ func normalizeJournaldLogs(logs []JournaldLog) []Event {
 		if err != nil {
 			timestamp = time.Time{}
 		}
-		module := log.GetString("")
+		severityStr := log.GetString("")
+		severity := func() byte {
+			switch severityStr {
+			case "1":
+				return EMERG
+			case "2":
+				return ALERT
+			case "3":
+				return CRIT
+			case "4":
+				return ERR
+			case "5":
+				return WARNING
+			case "6":
+				return INFO
+			case "7":
+				return DEBUG
+			default:
+				return DEBUG
+			}
+		}()
 		application := log.GetString("")
-		severity := log.GetString("")
 
+		query := &SQLQuery{
+			Select: "*"
+			From: "applications"
+			Where: "name = " 
+			OrderBy: ""
+			Limit: ""
+		}
+
+	// Select  string
+	// From    string
+	// Where   string
+	// OrderBy string
+	// Limit   string
 		event := Event{
 			Timestamp:   timestamp,
 			Host:        log.GetString("_HOSTNAME"),
-			Module:      module,
 			Application: application,
 			Severity:    severity,
 			Message:     log.GetString("MESSAGE"),
@@ -265,9 +288,11 @@ func insertEvents(db *sql.DB, injects []Event) error {
 func createSchema(db *sql.DB) error {
 	_, err := db.Exec(`
 			CREATE TABLE IF NOT EXISTS ingestion_state (
-				source      PRIMARY KEY TEXT,
+				source      TEXT,
 				last_cursor TEXT,
-				updated_at  TEXT
+				updated_at  TEXT,
+
+				PRIMARY KEY (source, last_cursor, updated_at)
 			);
 						
 		`)
@@ -278,20 +303,9 @@ func createSchema(db *sql.DB) error {
 	_, err = db.Exec(`
 			CREATE TABLE IF NOT EXISTS applications (
 				id   INTEGER PRIMARY KEY,
-				name TEXT
+				name UNIQUE TEXT
 			);
-						
-		`)
-	if err != nil {
-		return err
-	}
 
-	_, err = db.Exec(`
-			CREATE TABLE IF NOT EXISTS os_modules (
-				id   INTEGER PRIMARY KEY,
-				name TEXT
-			);
-						
 		`)
 	if err != nil {
 		return err
@@ -302,14 +316,13 @@ func createSchema(db *sql.DB) error {
 				id             INTEGER PRIMARY KEY,
 				timestamp      TEXT,
 				host           TEXT,
-				module_id      INTEGER,
-				application_id INTEGER,
+				// application_id INTEGER,
+				module         TEXT,
+				application    TEXT,
 				severity       INTEGER,
 				message        TEXT,
-				boot_id        TEXT,
+				boot_id        TEXT
 
-				FOREIGN KEY (module_id)
-					REFERENCES modules(id),
 				FOREIGN KEY (application_id)
 					REFERENCES application(id)
 			);
@@ -322,65 +335,35 @@ func createSchema(db *sql.DB) error {
 	return nil
 }
 
-// func insertApplications(db *sql.DB, injects []Application) error {
-// 	stmt, err := db.Prepare(`
-// 			INSERT INTO applications (
-// 				name
-// 			)
-// 			VALUES (?)
+func insertApplications(db *sql.DB, injects []Application) error {
+	stmt, err := db.Prepare(`
+			INSERT INTO applications (
+				name
+			)
+			VALUES (?)
 
-// 			ON CONFLICT(id) DO UPDATE SET
-// 				name = excluded.name
-// 		`)
-// 	if err != nil {
-// 		return err
-// 	}
+			ON CONFLICT(id) DO UPDATE SET
+				name = excluded.name
+		`)
+	if err != nil {
+		return err
+	}
 
-// 	defer func() {
-// 		_ = stmt.Close()
-// 	}()
+	defer func() {
+		_ = stmt.Close()
+	}()
 
-// 	for _, inject := range injects {
-// 		_, err := stmt.Exec(
-// 			inject.name,
-// 		)
-// 		if err != nil {
-// 			return err
-// 		}
-// 	}
+	for _, inject := range injects {
+		_, err := stmt.Exec(
+			inject.name,
+		)
+		if err != nil {
+			return err
+		}
+	}
 
-// 	return nil
-// }
-
-// func insertOSModules(db *sql.DB, injects []OSModule) error {
-// 	stmt, err := db.Prepare(`
-// 			INSERT INTO os_modules (
-// 				name
-// 			)
-// 			VALUES (?)
-
-// 			ON CONFLICT(id) DO UPDATE SET
-// 				name = excluded.name
-// 		`)
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	defer func() {
-// 		_ = stmt.Close()
-// 	}()
-
-// 	for _, inject := range injects {
-// 		_, err := stmt.Exec(
-// 			inject.name,
-// 		)
-// 		if err != nil {
-// 			return err
-// 		}
-// 	}
-
-// 	return nil
-// }
+	return nil
+}
 
 func (s *Store) ReadTableRows[T any](query SQLQuery, decode func(*sql.Rows) (T, error)) ([]T, error) {
 	queryString := fmt.Sprintf(`

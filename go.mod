@@ -1,4 +1,4 @@
-module github.com/luftmysza/logOracle
+module github.com/luftmysza/lOracle
 
 go 1.27.2
 
